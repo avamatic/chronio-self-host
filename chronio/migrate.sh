@@ -2,6 +2,7 @@
 set -eu
 until pg_isready -h db -U supabase_admin -d postgres >/dev/null; do sleep 2; done
 export PGHOST=db PGUSER=supabase_admin PGDATABASE=postgres
+until [ "$(psql -Atqc "SELECT to_regclass('auth.sessions') IS NOT NULL")" = t ]; do sleep 2; done
 # One session holds the lock across the migration ledger check and application.
 script=$(mktemp)
 trap 'rm -f "$script"' EXIT
