@@ -5,6 +5,7 @@ backups/
 volumes/db/data/
 volumes/storage/
 dashboard/
+!chronio/dashboard/
 *.pem
 *.key
 *.p12
