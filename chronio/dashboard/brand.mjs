@@ -20,7 +20,8 @@ const replacements = new Map([
   ['"Nuvio Library"', '"Chronio Library"'],
   ['your Nuvio account password', 'your Chronio account password'],
   ['supported Nuvio clients', 'supported Chronio clients'],
-  ['every Nuvio client', 'every Chronio client'],
+  ['Important: update every Nuvio client before relying on sync.', 'Playlist sync needs the updated Chronio TV build.'],
+  ['Data sync requires Android TV 0.7.9 Beta or newer, mobile 0.2.9 Beta or newer, and the latest available desktop or webOS build. Older clients will not sync account data at all.', 'Install the latest Chronio TV build to synchronize playlist sources and selections. Older builds keep playlist settings on each device.'],
 ]);
 const files = [];
 function walk(path) {
