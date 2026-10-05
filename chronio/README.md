@@ -30,6 +30,29 @@ on reload or sign-out. It saves with the loaded revision, rejecting stale edits.
 Use the account dashboard to register accounts and manage existing addon data.
 Email is automatically confirmed until SMTP is configured, matching upstream.
 
+## Dashboard extension
+
+The account dashboard includes **Playlists** under **Sync Data** at
+`/account?tab=playlists`. It shares the dashboard's authenticated request helper,
+session refresh, active profile and profile PIN gate. Source indexes are fetched
+directly by the browser without account credentials; publishers must allow CORS.
+Names, artwork and per-playlist toggles are shown when an index is available.
+Index failures retain saved selections. Removing/reordering sources and toggles
+stay in a draft until Save; revision conflicts retain the draft for review.
+
+`chronio/dashboard/Dockerfile` derives from a pinned upstream dashboard image.
+Its source is private upstream, so `brand.mjs` applies a checked overlay to its
+server/browser modules rather than rebuilding unavailable source. It inserts
+our maintained React component, sidebar item, Chronio logo/title/favicon and
+versions changed browser chunk URLs to avoid stale cached UI. Required structural
+markers fail the build when upstream changes. Protocol identifiers, environment
+names and existing account/addon integrations remain compatible.
+
+The image workflow publishes `ghcr.io/avamatic/chronio-account-dashboard` and
+verifies rendered branding plus browser assets over HTTP. Homelab pins this
+image separately from the deployment payload. Compose users can opt into the
+image with `NUVIO_ACCOUNT_DASHBOARD_IMAGE`; the upstream default remains available.
+
 ## Kubernetes
 
 `kubernetes/` supplies the database, auth, REST API, gateway, edge functions,
