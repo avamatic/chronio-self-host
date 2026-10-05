@@ -91,6 +91,26 @@ spec:
         - name: db-config
           mountPath: /etc/postgresql-custom
         - name: init
+          mountPath: /docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql
+          subPath: init-scripts/98-webhooks.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/97-_supabase.sql
+          subPath: migrations/97-_supabase.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/99-logs.sql
+          subPath: migrations/99-logs.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/99-pooler.sql
+          subPath: migrations/99-pooler.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/99-realtime.sql
+          subPath: migrations/99-realtime.sql
+          readOnly: true
+        - name: init
           mountPath: /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
           subPath: init-scripts/99-roles.sql
           readOnly: true
@@ -144,10 +164,12 @@ spec:
         command:
         - sh
         - -ec
-        - sh /opt/chronio/chronio/prepare-db.sh
+        - 'sh /opt/chronio/chronio/prepare-db.sh # /init'
         volumeMounts:
         - name: payload
           mountPath: /payload
+        - name: init
+          mountPath: /init
         securityContext:
           runAsUser: 1000
           runAsGroup: 1000
@@ -807,6 +829,10 @@ spec:
               key: kong__DASHBOARD_PASSWORD
         - name: KONG_DECLARATIVE_CONFIG
           value: /tmp/kong.yml
+        - name: KONG_PREFIX
+          value: /tmp/kong
+        - name: KONG_NGINX_WORKER_PROCESSES
+          value: '2'
         resources:
           requests:
             cpu: 20m
@@ -1540,6 +1566,8 @@ spec:
           capabilities:
             drop:
             - ALL
+            add:
+            - NET_BIND_SERVICE
           seccompProfile:
             type: RuntimeDefault
         command:
