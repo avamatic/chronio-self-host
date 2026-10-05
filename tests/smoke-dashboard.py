@@ -20,3 +20,13 @@ assert assets
 for asset in assets:
     assert urllib.request.urlopen(base+asset,timeout=10).status == 200, asset
 print('PASS Chronio title, header, favicon and versioned browser assets')
+body = urllib.request.urlopen(base+'/account?tab=playlists',timeout=10).read().decode()
+assets = set(html.unescape(value) for value in re.findall(r'(?:src|href)="([^"<>]+)"',body) if value.startswith('/_next/'))
+panel = False
+navigation = False
+for asset in assets:
+    content = urllib.request.urlopen(base+asset,timeout=10).read().decode()
+    panel |= 'function ChronioPlaylistEditor' in content
+    navigation |= 'key:"playlists",label:"Playlists"' in content
+assert panel and navigation, 'Account panel and sidebar must ship in the requested browser chunks'
+print('PASS integrated playlist panel and sidebar browser chunks')

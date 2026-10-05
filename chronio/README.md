@@ -24,10 +24,9 @@ this backend. Limits: 100 sources, 2,000 disabled selections, 256 KiB per record
 New accounts receive a primary profile immediately, which they can rename
 through the account dashboard or client. Existing profiles are left intact.
 
-The `/playlists` browser editor uses email/password sign-in and the public
-client key returned by discovery. Session tokens stay in memory and disappear
-on reload or sign-out. It saves with the loaded revision, rejecting stale edits.
-Use the account dashboard to register accounts and manage existing addon data.
+The `/playlists` URL redirects to the account dashboard's integrated playlist
+panel. It saves with the loaded revision, rejecting stale edits. Use the account
+dashboard to register accounts and manage existing addon data.
 Email is automatically confirmed until SMTP is configured, matching upstream.
 
 ## Dashboard extension
