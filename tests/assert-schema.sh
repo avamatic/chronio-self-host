@@ -17,7 +17,9 @@ assert_count() {
     echo "OK  $label ($actual)"
 }
 
-assert_count "public tables" 21 "$(query "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")"
+expected_tables=22
+if [ "${1:-full}" = database ]; then expected_tables=21; fi
+assert_count "public tables" "$expected_tables" "$(query "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'")"
 assert_count "public RLS policies" 18 "$(query "select count(*) from pg_policies where schemaname='public'")"
 assert_count "auth trigger" 1 "$(query "select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='auth' and c.relname='users' and t.tgname='on_auth_user_created_addons'")"
 assert_count "refreshed production functions" 4 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cleanup_profile_scoped_data_on_delete','delete_profile_scoped_data','sync_normalize_non_tracker_provider_credential','sync_seed_provider_credentials')")"
@@ -29,13 +31,16 @@ if [ "${1:-full}" = "database" ]; then
 else
     assert_count "storage policies" 1 "$(query "select count(*) from pg_policies where schemaname='storage' and tablename='objects' and policyname='Public avatar read access'")"
     assert_count "storage buckets" 2 "$(query "select count(*) from storage.buckets where id in ('avatars', 'covers')")"
-    assert_count "Nuvio migrations" 11 "$(query "select count(*) from nuvio_migrations.schema_migrations")"
+    expected_migrations=0
+    for migration in database/migrations/*.sql; do expected_migrations=$((expected_migrations + 1)); done
+    assert_count "Nuvio migrations" "$expected_migrations" "$(query "select count(*) from nuvio_migrations.schema_migrations")"
     assert_count "private settings" 1 "$(query "select count(*) from nuvio_private.instance_settings where key='default_catalog_url'")"
     assert_count "avatar catalog entries" 41 "$(query "select count(*) from public.avatar_catalog where is_active")"
     assert_count "avatar catalog objects" 41 "$(query "select count(*) from public.avatar_catalog a join storage.objects o on o.bucket_id='avatars' and o.name=a.storage_path where a.is_active")"
     assert_count "anonymous RPC allowlist" 4 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and has_function_privilege('anon', p.oid, 'EXECUTE')")"
     assert_count "authenticated client RPCs" 11 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname = any(array['list_my_sessions','register_current_device','register_current_session','revoke_my_session','sync_delete_library_items','sync_get_library_delta_cursor','sync_patch_profile','sync_pull_library_delta','sync_push_library_items','sync_push_profile_settings_blob_guarded','sync_seed_provider_credentials']) and has_function_privilege('authenticated', p.oid, 'EXECUTE')")"
+    assert_count "playlist client RPCs" 2 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('sync_pull_playlist_configuration','sync_push_playlist_configuration') and has_function_privilege('authenticated', p.oid, 'EXECUTE') and not has_function_privilege('anon', p.oid, 'EXECUTE')")"
     assert_count "dashboard profile patch signature" 1 "$(query "select count(*) from pg_proc where oid = to_regprocedure('public.sync_patch_profile(integer,text,text,boolean,boolean,text,boolean,text,boolean,text,boolean,text,boolean)') and pronargdefaults = 12")"
-    assert_count "exposed internal RPCs" 0 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cleanup_anonymous_users','cleanup_profile_scoped_data_on_delete','consume_tv_login_session','delete_profile_scoped_data','emit_sync_invalidation','nuvio_default_catalog_url','sync_normalize_non_tracker_provider_credential') and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE'))")"
+    assert_count "exposed internal RPCs" 0 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cleanup_anonymous_users','cleanup_profile_scoped_data_on_delete','consume_tv_login_session','delete_profile_scoped_data','emit_sync_invalidation','nuvio_default_catalog_url','sync_normalize_non_tracker_provider_credential','chronio_create_primary_profile') and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE'))")"
     assert_count "unhardened security definer functions" 0 "$(query "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prosecdef and coalesce(array_to_string(p.proconfig, ','), '') not like 'search_path=pg_catalog, public, auth, extensions, pg_temp%'")"
 fi

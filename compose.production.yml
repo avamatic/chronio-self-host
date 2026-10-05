@@ -23,6 +23,7 @@ services:
       NUVIO_DOMAIN: ${NUVIO_DOMAIN}
       ANON_KEY: ${ANON_KEY}
     volumes:
+      - ./chronio:/srv/chronio:ro
       - ./volumes/proxy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config

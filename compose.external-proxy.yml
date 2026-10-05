@@ -21,6 +21,7 @@ services:
       NUVIO_CADDY_ADDRESS: :80
       ANON_KEY: ${ANON_KEY}
     volumes:
+      - ./chronio:/srv/chronio:ro
       - ./volumes/proxy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config

@@ -173,6 +173,11 @@ jobs:
         run: ./tests/smoke-workflows.sh
       - name: Verify API security boundaries
         run: ./tests/smoke-security.sh
+      - name: Verify Chronio playlist configuration and TV login
+        run: |
+          export CHRONIO_URL=$(sed -n 's/^SUPABASE_PUBLIC_URL=//p' .env)
+          export CHRONIO_SERVICE_ROLE_KEY=$(sed -n 's/^SERVICE_ROLE_KEY=//p' .env)
+          python3 tests/smoke-playlist-configuration.py
       - name: Verify official account import
         run: ./tests/smoke-account-import.sh
       - name: Verify backup and restore
