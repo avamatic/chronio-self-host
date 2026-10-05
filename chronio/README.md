@@ -6,7 +6,7 @@ An empty configuration is a real saved value, distinct from no row or an error.
 
 `sync_push_playlist_configuration(p_profile_id, p_configuration, p_expected_revision)`
 creates at revision 0 or replaces the matching revision. It returns the saved
-row. A stale write returns SQLSTATE `40001`; reload and merge before retrying.
+row. A stale write returns HTTP 409 (PostgREST code `PT409`); reload and merge before retrying.
 Only authenticated accounts can invoke these APIs; the owner is resolved on the
 server. Profile deletion and account deletion cascade to the configuration.
 

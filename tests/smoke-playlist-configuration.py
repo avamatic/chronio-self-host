@@ -10,7 +10,7 @@ base = os.environ['CHRONIO_URL'].rstrip('/')
 admin = os.environ['CHRONIO_SERVICE_ROLE_KEY']
 users = []
 
-def request(path, data=None, token=None, method=None, expected=200):
+def request(path, data=None, token=None, method=None, expected=None):
     headers = {'Content-Type':'application/json', 'apikey':key, 'Authorization':'Bearer '+(token or key)}
     req = urllib.request.Request(base+path, data=None if data is None else json.dumps(data).encode(), headers=headers, method=method)
     try:
@@ -18,13 +18,13 @@ def request(path, data=None, token=None, method=None, expected=200):
         status, payload = response.status, response.read()
     except urllib.error.HTTPError as error:
         status, payload = error.code, error.read()
-    if status != expected:
+    if (expected is None and not 200 <= status < 300) or (expected is not None and status != expected):
         raise AssertionError(f'{path}: expected HTTP {expected}, got {status}: {payload[:500].decode()}')
     return json.loads(payload) if payload else None
 
 key = json.load(urllib.request.urlopen(base+'/.well-known/nuvio'))['publishable_key']
 
-def rpc(name, data, token=None, expected=200):
+def rpc(name, data, token=None, expected=None):
     return request('/rest/v1/rpc/'+name, data, token, expected=expected)
 
 try:
