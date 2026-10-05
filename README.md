@@ -1,3 +1,16 @@
+# Chronio Self Host
+
+Chronio's fork of [Nuvio Self Host](https://github.com/NuvioMedia/self-host).
+The upstream account, addon, profile and watch-state APIs remain available.
+Chronio adds shared per-profile playlist configuration, a browser editor at
+`/playlists`, and Kubernetes resources for the homelab deployment.
+
+- [Chronio extensions and Kubernetes operations](chronio/README.md)
+- Production manifests, encrypted secrets, ingress and image pins belong to
+  [avamatic/homelab](https://github.com/avamatic/homelab/tree/main/k3s/apps/chronio-self-host).
+- The payload image contains migrations, gateway configuration, functions and
+  avatar assets. Application images are independently pinned by digest.
+
 # Self-hosting Nuvio
 
 Run Nuvio on your own server with Docker Compose. The deployment includes the

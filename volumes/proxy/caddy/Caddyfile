@@ -6,6 +6,14 @@
 }
 
 {$NUVIO_CADDY_ADDRESS} {
+	@playlist_editor path /playlists /playlists/*
+	handle @playlist_editor {
+		root * /srv/chronio
+		rewrite /playlists /playlists.html
+		rewrite /playlists/app.js /app.js
+		file_server
+		header Cache-Control "no-store"
+	}
 	encode zstd gzip
 
 	@health path /health /healthz

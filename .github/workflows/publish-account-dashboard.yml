@@ -25,6 +25,7 @@ env:
 
 jobs:
   publish:
+    if: github.repository == 'NuvioMedia/self-host'
     runs-on: ubuntu-latest
     steps:
       - name: Check out private website source

@@ -1,0 +1,1809 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: db
+        image: docker.io/supabase/postgres@sha256:95d92e9563121189086690a4b7f8f2b711a4809a2499f45592199aae68ebae5f
+        ports:
+        - name: postgres
+          containerPort: 5432
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__POSTGRES_HOST
+        - name: PGPORT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__PGPORT
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__POSTGRES_PORT
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__PGPASSWORD
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__POSTGRES_PASSWORD
+        - name: PGDATABASE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__PGDATABASE
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__POSTGRES_DB
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__JWT_SECRET
+        - name: JWT_EXP
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: db__JWT_EXP
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+        args:
+        - postgres
+        - -c
+        - config_file=/etc/postgresql/postgresql.conf
+        - -c
+        - log_min_messages=fatal
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/postgresql/data
+        - name: db-config
+          mountPath: /etc/postgresql-custom
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+          subPath: init-scripts/99-roles.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+          subPath: init-scripts/99-jwt.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/99999999990000-nuvio-baseline.sql
+          subPath: migrations/99999999990000-nuvio-baseline.sql
+          readOnly: true
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d/migrations/99999999990001-nuvio-auth-trigger.sql
+          subPath: migrations/99999999990001-nuvio-auth-trigger.sql
+          readOnly: true
+        startupProbe:
+          exec:
+            command:
+            - sh
+            - -ec
+            - pg_isready -U postgres -h localhost && psql -U supabase_admin -d postgres
+              -Atqc "select exists(select 1 from nuvio_migrations.schema_migrations
+              where version = '00000000000001')" | grep -qx t
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+            - -h
+            - localhost
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: init
+        emptyDir: {}
+      - name: db-data
+        persistentVolumeClaim:
+          claimName: db-data
+      - name: db-config
+        persistentVolumeClaim:
+          claimName: db-config
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - sh /opt/chronio/chronio/prepare-db.sh
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      - name: prepare-config
+        image: docker.io/supabase/postgres@sha256:95d92e9563121189086690a4b7f8f2b711a4809a2499f45592199aae68ebae5f
+        command:
+        - sh
+        - -ec
+        - if [ ! -e /config/.initialized ]; then cp -a /etc/postgresql-custom/. /config/;
+          touch /config/.initialized; fi
+        volumeMounts:
+        - name: db-config
+          mountPath: /config
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+            - DAC_OVERRIDE
+            - FOWNER
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+spec:
+  selector:
+    app: db
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: auth
+        image: docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf
+        ports:
+        - name: http
+          containerPort: 9999
+        env:
+        - name: GOTRUE_API_HOST
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_API_HOST
+        - name: GOTRUE_API_PORT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_API_PORT
+        - name: API_EXTERNAL_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__API_EXTERNAL_URL
+        - name: GOTRUE_DB_DRIVER
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_DRIVER
+        - name: GOTRUE_DB_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_DATABASE_URL
+        - name: GOTRUE_DB_MAX_POOL_SIZE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_MAX_POOL_SIZE
+        - name: GOTRUE_DB_MAX_IDLE_POOL_SIZE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_MAX_IDLE_POOL_SIZE
+        - name: GOTRUE_DB_CONN_MAX_LIFETIME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_CONN_MAX_LIFETIME
+        - name: GOTRUE_DB_CONN_MAX_IDLE_TIME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DB_CONN_MAX_IDLE_TIME
+        - name: GOTRUE_SITE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SITE_URL
+        - name: GOTRUE_URI_ALLOW_LIST
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_URI_ALLOW_LIST
+        - name: GOTRUE_DISABLE_SIGNUP
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_DISABLE_SIGNUP
+        - name: GOTRUE_JWT_ADMIN_ROLES
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_ADMIN_ROLES
+        - name: GOTRUE_JWT_AUD
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_AUD
+        - name: GOTRUE_JWT_DEFAULT_GROUP_NAME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_DEFAULT_GROUP_NAME
+        - name: GOTRUE_JWT_EXP
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_EXP
+        - name: GOTRUE_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_SECRET
+        - name: GOTRUE_JWT_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_KEYS
+        - name: GOTRUE_JWT_ISSUER
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_JWT_ISSUER
+        - name: GOTRUE_EXTERNAL_EMAIL_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_EXTERNAL_EMAIL_ENABLED
+        - name: GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED
+        - name: GOTRUE_MAILER_AUTOCONFIRM
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_AUTOCONFIRM
+        - name: GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED
+        - name: GOTRUE_MAILER_EXTERNAL_HOSTS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_EXTERNAL_HOSTS
+        - name: GOTRUE_PASSWORD_MIN_LENGTH
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_PASSWORD_MIN_LENGTH
+        - name: GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED
+        - name: GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL
+        - name: GOTRUE_RATE_LIMIT_TOKEN_REFRESH
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_RATE_LIMIT_TOKEN_REFRESH
+        - name: GOTRUE_RATE_LIMIT_ANONYMOUS_USERS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_RATE_LIMIT_ANONYMOUS_USERS
+        - name: GOTRUE_RATE_LIMIT_VERIFY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_RATE_LIMIT_VERIFY
+        - name: GOTRUE_RATE_LIMIT_HEADER
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_RATE_LIMIT_HEADER
+        - name: GOTRUE_PASSKEY_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_PASSKEY_ENABLED
+        - name: GOTRUE_WEBAUTHN_RP_ID
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_WEBAUTHN_RP_ID
+        - name: GOTRUE_WEBAUTHN_RP_DISPLAY_NAME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_WEBAUTHN_RP_DISPLAY_NAME
+        - name: GOTRUE_WEBAUTHN_RP_ORIGINS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_WEBAUTHN_RP_ORIGINS
+        - name: GOTRUE_SMTP_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_ADMIN_EMAIL
+        - name: GOTRUE_SMTP_HOST
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_HOST
+        - name: GOTRUE_SMTP_PORT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_PORT
+        - name: GOTRUE_SMTP_USER
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_USER
+        - name: GOTRUE_SMTP_PASS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_PASS
+        - name: GOTRUE_SMTP_SENDER_NAME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMTP_SENDER_NAME
+        - name: GOTRUE_MAILER_URLPATHS_INVITE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_URLPATHS_INVITE
+        - name: GOTRUE_MAILER_URLPATHS_CONFIRMATION
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_URLPATHS_CONFIRMATION
+        - name: GOTRUE_MAILER_URLPATHS_RECOVERY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_URLPATHS_RECOVERY
+        - name: GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE
+        - name: GOTRUE_EXTERNAL_PHONE_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_EXTERNAL_PHONE_ENABLED
+        - name: GOTRUE_SMS_AUTOCONFIRM
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_SMS_AUTOCONFIRM
+        - name: GOTRUE_MFA_TOTP_ENROLL_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MFA_TOTP_ENROLL_ENABLED
+        - name: GOTRUE_MFA_TOTP_VERIFY_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MFA_TOTP_VERIFY_ENABLED
+        - name: GOTRUE_MFA_MAX_ENROLLED_FACTORS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: auth__GOTRUE_MFA_MAX_ENROLLED_FACTORS
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 9999
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          httpGet:
+            port: 9999
+            path: /health
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+spec:
+  selector:
+    app: auth
+  ports:
+  - name: http
+    port: 9999
+    targetPort: 9999
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rest
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rest
+  template:
+    metadata:
+      labels:
+        app: rest
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: rest
+        image: docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+        ports:
+        - name: http
+          containerPort: 3000
+        env:
+        - name: PGRST_DB_URI
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_URI
+        - name: PGRST_DB_SCHEMAS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_SCHEMAS
+        - name: PGRST_DB_MAX_ROWS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_MAX_ROWS
+        - name: PGRST_DB_EXTRA_SEARCH_PATH
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_EXTRA_SEARCH_PATH
+        - name: PGRST_DB_ANON_ROLE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_ANON_ROLE
+        - name: PGRST_ADMIN_SERVER_PORT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_ADMIN_SERVER_PORT
+        - name: PGRST_ADMIN_SERVER_HOST
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_ADMIN_SERVER_HOST
+        - name: PGRST_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_JWT_SECRET
+        - name: PGRST_DB_USE_LEGACY_GUCS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_DB_USE_LEGACY_GUCS
+        - name: PGRST_APP_SETTINGS_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_APP_SETTINGS_JWT_SECRET
+        - name: PGRST_APP_SETTINGS_JWT_EXP
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: rest__PGRST_APP_SETTINGS_JWT_EXP
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 3000
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          tcpSocket:
+            port: 3000
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rest
+spec:
+  selector:
+    app: rest
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kong
+  template:
+    metadata:
+      labels:
+        app: kong
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: kong
+        image: docker.io/kong/kong@sha256:6addf50e6bd8d578314cb9ce4f2d2d1e3781d2edecef59f707e00c6e05d384f5
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: KONG_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_DATABASE
+        - name: KONG_DNS_ORDER
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_DNS_ORDER
+        - name: KONG_DNS_NOT_FOUND_TTL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_DNS_NOT_FOUND_TTL
+        - name: KONG_PLUGINS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_PLUGINS
+        - name: KONG_NGINX_PROXY_PROXY_BUFFER_SIZE
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_NGINX_PROXY_PROXY_BUFFER_SIZE
+        - name: KONG_NGINX_PROXY_PROXY_BUFFERS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_NGINX_PROXY_PROXY_BUFFERS
+        - name: KONG_PROXY_ACCESS_LOG
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__KONG_PROXY_ACCESS_LOG
+        - name: NUVIO_GATEWAY_CONFIG_VERSION
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__NUVIO_GATEWAY_CONFIG_VERSION
+        - name: SUPABASE_PUBLIC_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SUPABASE_PUBLIC_URL
+        - name: SUPABASE_ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SUPABASE_ANON_KEY
+        - name: SUPABASE_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SUPABASE_SERVICE_KEY
+        - name: SUPABASE_PUBLISHABLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SUPABASE_PUBLISHABLE_KEY
+        - name: SUPABASE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SUPABASE_SECRET_KEY
+        - name: ANON_KEY_ASYMMETRIC
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__ANON_KEY_ASYMMETRIC
+        - name: SERVICE_ROLE_KEY_ASYMMETRIC
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__SERVICE_ROLE_KEY_ASYMMETRIC
+        - name: DASHBOARD_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__DASHBOARD_USERNAME
+        - name: DASHBOARD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: kong__DASHBOARD_PASSWORD
+        - name: KONG_DECLARATIVE_CONFIG
+          value: /tmp/kong.yml
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1337
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        command:
+        - /bin/sh
+        - /payload/volumes/api/kong-entrypoint.sh
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+          readOnly: true
+        - name: payload
+          mountPath: /home/kong/temp.yml
+          subPath: volumes/api/kong.yml
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  selector:
+    app: kong
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: storage
+  template:
+    metadata:
+      labels:
+        app: storage
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: storage
+        image: docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf
+        ports:
+        - name: http
+          containerPort: 5000
+        env:
+        - name: ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__ANON_KEY
+        - name: SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__SERVICE_KEY
+        - name: POSTGREST_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__POSTGREST_URL
+        - name: AUTH_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__AUTH_JWT_SECRET
+        - name: JWT_JWKS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__JWT_JWKS
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__DATABASE_URL
+        - name: STORAGE_PUBLIC_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__STORAGE_PUBLIC_URL
+        - name: REQUEST_ALLOW_X_FORWARDED_PATH
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__REQUEST_ALLOW_X_FORWARDED_PATH
+        - name: FILE_SIZE_LIMIT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__FILE_SIZE_LIMIT
+        - name: STORAGE_BACKEND
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__STORAGE_BACKEND
+        - name: GLOBAL_S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__GLOBAL_S3_BUCKET
+        - name: FILE_STORAGE_BACKEND_PATH
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__FILE_STORAGE_BACKEND_PATH
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__TENANT_ID
+        - name: REGION
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__REGION
+        - name: ENABLE_IMAGE_TRANSFORMATION
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__ENABLE_IMAGE_TRANSFORMATION
+        - name: IMGPROXY_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__IMGPROXY_URL
+        - name: S3_PROTOCOL_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__S3_PROTOCOL_ACCESS_KEY_ID
+        - name: S3_PROTOCOL_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: storage__S3_PROTOCOL_ACCESS_KEY_SECRET
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: storage-data
+          mountPath: /var/lib/storage
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 5000
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          httpGet:
+            port: 5000
+            path: /status
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: storage-data
+        persistentVolumeClaim:
+          claimName: storage-data
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      - name: storage-permissions
+        image: docker.io/library/busybox:1.37@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+        command:
+        - sh
+        - -ec
+        - chown 1000:1000 /storage
+        volumeMounts:
+        - name: storage-data
+          mountPath: /storage
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage
+spec:
+  selector:
+    app: storage
+  ports:
+  - name: http
+    port: 5000
+    targetPort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imgproxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: imgproxy
+  template:
+    metadata:
+      labels:
+        app: imgproxy
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: imgproxy
+        image: docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d
+        ports:
+        - name: http
+          containerPort: 5001
+        env:
+        - name: IMGPROXY_BIND
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: imgproxy__IMGPROXY_BIND
+        - name: IMGPROXY_LOCAL_FILESYSTEM_ROOT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: imgproxy__IMGPROXY_LOCAL_FILESYSTEM_ROOT
+        - name: IMGPROXY_USE_ETAG
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: imgproxy__IMGPROXY_USE_ETAG
+        - name: IMGPROXY_AUTO_WEBP
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: imgproxy__IMGPROXY_AUTO_WEBP
+        - name: IMGPROXY_MAX_SRC_RESOLUTION
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: imgproxy__IMGPROXY_MAX_SRC_RESOLUTION
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: storage-data
+          mountPath: /var/lib/storage
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 5001
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          tcpSocket:
+            port: 5001
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: storage-data
+        persistentVolumeClaim:
+          claimName: storage-data
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imgproxy
+spec:
+  selector:
+    app: imgproxy
+  ports:
+  - name: http
+    port: 5001
+    targetPort: 5001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: functions
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: functions
+  template:
+    metadata:
+      labels:
+        app: functions
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: functions
+        image: docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120
+        ports:
+        - name: http
+          containerPort: 9000
+        env:
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__JWT_SECRET
+        - name: SUPABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_URL
+        - name: SUPABASE_PUBLIC_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_PUBLIC_URL
+        - name: SUPABASE_ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_ANON_KEY
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_SERVICE_ROLE_KEY
+        - name: SUPABASE_PUBLISHABLE_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_PUBLISHABLE_KEYS
+        - name: SUPABASE_SECRET_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_SECRET_KEYS
+        - name: SUPABASE_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__SUPABASE_DB_URL
+        - name: VERIFY_JWT
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: functions__VERIFY_JWT
+        - name: DENO_DIR
+          value: /tmp/deno-cache
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        args:
+        - start
+        - --main-service
+        - /home/deno/functions/main
+        volumeMounts:
+        - name: payload
+          mountPath: /home/deno/functions
+          subPath: volumes/functions
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 9000
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: functions
+spec:
+  selector:
+    app: functions
+  ports:
+  - name: http
+    port: 9000
+    targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-dashboard
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: account-dashboard
+  template:
+    metadata:
+      labels:
+        app: account-dashboard
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: account-dashboard
+        image: ghcr.io/nuviomedia/nuvio-account-dashboard@sha256:6b6976985906df71bb8603422e7e199d309d60f8114481e959838ce00cb29013
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: NUVIO_SUPABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: account-dashboard__NUVIO_SUPABASE_URL
+        - name: NUVIO_SUPABASE_ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: account-dashboard__NUVIO_SUPABASE_ANON_KEY
+        - name: NUVIO_PUBLIC_SITE_URL
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: account-dashboard__NUVIO_PUBLIC_SITE_URL
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: account-dashboard
+spec:
+  selector:
+    app: account-dashboard
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: gateway
+        image: docker.io/library/caddy@sha256:ae4458638da8e1a91aafffb231c5f8778e964bca650c8a8cb23a7e8ac557aa3c
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: NUVIO_CADDY_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: gateway__NUVIO_CADDY_ADDRESS
+        - name: ANON_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: gateway__ANON_KEY
+        - name: XDG_DATA_HOME
+          value: /tmp/data
+        - name: XDG_CONFIG_HOME
+          value: /tmp/config
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        command:
+        - caddy
+        - run
+        - --config
+        - /payload/volumes/proxy/caddy/Caddyfile
+        - --adapter
+        - caddyfile
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+          readOnly: true
+        - name: payload
+          mountPath: /srv/chronio
+          subPath: chronio
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        startupProbe:
+          tcpSocket:
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 120
+        readinessProbe:
+          httpGet:
+            port: 8080
+            path: /health
+          periodSeconds: 10
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector:
+    app: gateway
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-config
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      containers:
+      - name: migrate
+        image: docker.io/supabase/postgres@sha256:95d92e9563121189086690a4b7f8f2b711a4809a2499f45592199aae68ebae5f
+        command:
+        - sh
+        - /payload/chronio/migrate.sh
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: POSTGRES_PASSWORD
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-avatars
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: seed-avatars
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      - name: assets
+        image: chronio-payload
+        command:
+        - sh
+        - -ec
+        - cp -R /opt/chronio/. /payload/
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      containers:
+      - name: seed-avatars
+        image: docker.io/curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6
+        command:
+        - sh
+        - /payload/chronio/seed-avatars.sh
+        env:
+        - name: SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chronio-env
+              key: SERVICE_ROLE_KEY
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - name: payload
+          mountPath: /payload
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: payload
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector: {}
