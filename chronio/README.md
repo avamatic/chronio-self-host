@@ -21,6 +21,9 @@ playback places/title progress. Writers should preserve unknown v1 fields;
 unsupported versions must be left untouched. URLs are stored, never fetched by
 this backend. Limits: 100 sources, 2,000 disabled selections, 256 KiB per record.
 
+New accounts receive a primary profile immediately, which they can rename
+through the account dashboard or client. Existing profiles are left intact.
+
 The `/playlists` browser editor uses email/password sign-in and the public
 client key returned by discovery. Session tokens stay in memory and disappear
 on reload or sign-out. It saves with the loaded revision, rejecting stale edits.
